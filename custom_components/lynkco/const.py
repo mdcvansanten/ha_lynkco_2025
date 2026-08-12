@@ -48,3 +48,12 @@ CONF_REFRESH_TOKEN = "refresh_token"
 CONF_DEVICE_ID = "device_id"
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_DRIVING_INTERVAL = "driving_interval"
+
+# Sensitive-command security. High-risk commands are blocked by default until
+# a PIN has been configured and a temporary authorization window is opened.
+CONF_SECURITY_ENABLED = "security_enabled"
+CONF_SECURITY_PIN_HASH = "security_pin_hash"
+CONF_SECURITY_PIN_SALT = "security_pin_salt"
+CONF_SECURITY_AUTH_MINUTES = "security_authorization_minutes"
+DEFAULT_SECURITY_ENABLED = True
+DEFAULT_SECURITY_AUTH_MINUTES = 2
