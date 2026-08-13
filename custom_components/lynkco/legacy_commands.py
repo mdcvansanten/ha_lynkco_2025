@@ -1,0 +1,164 @@
+"""Remote command adapter for pre-2025 Lynk & Co 01 (CX11_A1).
+
+The pre-2025 01 uses the older connectedcar.cloud remote-control backend.
+This module deliberately exposes only the commands we have verified from the
+legacy integration.  Secrets, tokens and VINs are never logged.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from homeassistant.exceptions import HomeAssistantError
+
+_LOGGER = logging.getLogger(__name__)
+
+IAM_VALIDATE_URL = (
+    "https://iam-service-prod.westeurope.cloudapp.azure.com/validate-session"
+)
+DELEGATED_DRIVER_URL = (
+    "https://delegated-driver-tls.aion.connectedcar.cloud/"
+    "delegated-driver/api/delegateddriver/v1/vehicle/{vin}/drivers"
+)
+LEGACY_CLIMATE_URL = (
+    "https://remote-vehicle-control-tls.aion.connectedcar.cloud/"
+    "api/v1/rvc/vehicles/{vin}/remotecontrol/climate"
+)
+
+LEGACY_USER_AGENT = "LynkCo/3016 CFNetwork/1492.0.1 Darwin/23.3.0"
+
+
+class Legacy01Commands:
+    """Execute confirmed legacy remote commands for a CX11_A1 vehicle."""
+
+    def __init__(self, api) -> None:
+        self._api = api
+        self._session = api._session  # Same HA-managed ClientSession as main API.
+        self._ccc_token: str | None = None
+        self._user_id: str | None = None
+
+    async def _get_ccc_token(self) -> str:
+        """Exchange the current mobile access token for a legacy CCC token."""
+        if self._ccc_token:
+            return self._ccc_token
+
+        headers = {
+            "user-agent": LEGACY_USER_AGENT,
+            "accept": "application/json",
+            "content-type": "application/json",
+            "X-Auth-Token": self._api.access_token,
+            "api-version": "1",
+        }
+        payload = {"deviceUuid": self._api.device_id, "isLogin": True}
+
+        async with self._session.post(
+            IAM_VALIDATE_URL, headers=headers, json=payload
+        ) as response:
+            if response.status != 200:
+                _LOGGER.error(
+                    "Legacy 01 authentication failed (HTTP %s)", response.status
+                )
+                raise HomeAssistantError(
+                    f"Legacy Lynk & Co authentication failed (HTTP {response.status})"
+                )
+            data = await response.json()
+
+        token = data.get("cccToken")
+        if not token:
+            raise HomeAssistantError("Legacy Lynk & Co authentication returned no CCC token")
+        self._ccc_token = token
+        return token
+
+    async def _get_user_id(self, vin: str) -> str:
+        """Resolve the legacy driver user id for the vehicle."""
+        if self._user_id:
+            return self._user_id
+
+        ccc_token = await self._get_ccc_token()
+        headers = {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "Authorization": f"Bearer {ccc_token}",
+        }
+        async with self._session.get(
+            DELEGATED_DRIVER_URL.format(vin=vin), headers=headers
+        ) as response:
+            if response.status != 200:
+                _LOGGER.error(
+                    "Legacy 01 driver lookup failed (HTTP %s)", response.status
+                )
+                raise HomeAssistantError(
+                    f"Legacy Lynk & Co driver lookup failed (HTTP {response.status})"
+                )
+            data = await response.json()
+
+        drivers = data.get("drivers") or []
+        user_id = drivers[0].get("userId") if drivers else None
+        if not user_id:
+            raise HomeAssistantError("No legacy Lynk & Co driver was returned")
+        self._user_id = user_id
+        return user_id
+
+    async def _send_climate(self, vin: str, payload: dict) -> None:
+        ccc_token = await self._get_ccc_token()
+        user_id = await self._get_user_id(vin)
+        headers = {
+            "user-agent": LEGACY_USER_AGENT,
+            "accept": "application/json",
+            "content-type": "application/json",
+            "userId": user_id,
+            "Authorization": f"Bearer {ccc_token}",
+        }
+
+        async with self._session.post(
+            LEGACY_CLIMATE_URL.format(vin=vin), headers=headers, json=payload
+        ) as response:
+            if response.status != 200:
+                # A stale CCC token is a common failure mode. Clear it so the
+                # next attempt performs a fresh exchange; never log response
+                # bodies because they may contain account-specific details.
+                if response.status in (401, 403):
+                    self._ccc_token = None
+                    self._user_id = None
+                _LOGGER.error(
+                    "Legacy 01 climate command failed (HTTP %s)", response.status
+                )
+                raise HomeAssistantError(
+                    f"Legacy Lynk & Co climate command failed (HTTP {response.status})"
+                )
+
+        _LOGGER.info("Legacy Lynk & Co 01 climate command accepted")
+
+    async def start_climate(
+        self, vin: str, *, level: str = "MEDIUM", duration_minutes: int = 15
+    ) -> None:
+        """Start pre-conditioning using the confirmed legacy command shape."""
+        level = level.upper()
+        if level not in {"LOW", "MEDIUM", "HIGH"}:
+            raise ValueError("Legacy climate level must be LOW, MEDIUM or HIGH")
+        duration_minutes = max(1, min(int(duration_minutes), 30))
+        payload = {
+            "climateLevel": level,
+            "command": "START",
+            "dayofweek": ["ONCE"],
+            "durationInSeconds": duration_minutes * 60,
+            "scheduledTime": 10,
+            "heatItems": ["ALL"],
+            "startTimeOfDay": "00:00",
+            "timerId": "1",
+            "ventilationItems": ["ALL"],
+        }
+        await self._send_climate(vin, payload)
+
+    async def stop_climate(self, vin: str) -> None:
+        """Stop legacy pre-conditioning."""
+        payload = {
+            "command": "STOP",
+            "dayofweek": ["ONCE"],
+            "startTimeOfDay": "00:00",
+            "durationInSeconds": 1,
+            "timerId": "1",
+            "ventilationItems": ["ALL"],
+            "scheduledTime": 10,
+        }
+        await self._send_climate(vin, payload)
