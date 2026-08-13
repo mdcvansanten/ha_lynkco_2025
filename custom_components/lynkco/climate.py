@@ -2,12 +2,7 @@
 
 import logging
 
-from homeassistant.components.climate import (
-    ClimateEntity,
-    ClimateEntityFeature,
-    HVACAction,
-    HVACMode,
-)
+from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature, HVACAction, HVACMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
@@ -17,22 +12,18 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER, MODEL_NAMES
 from .coordinator import LynkCoCoordinator
+from .legacy_commands import Legacy01Commands
 
 _LOGGER = logging.getLogger(__name__)
-
 DEFAULT_MIN_TEMP = 16
 DEFAULT_MAX_TEMP = 28
 DEFAULT_TARGET_TEMP = 21
+LEGACY_01_MODEL = "CX11_A1"
 
 
-async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
-) -> None:
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
-    entities = []
-    for vin, coordinator in data["coordinators"].items():
-        entities.append(LynkCoClimate(coordinator, data["api"]))
-    async_add_entities(entities)
+    async_add_entities([LynkCoClimate(coordinator, data["api"]) for coordinator in data["coordinators"].values()])
 
 
 class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
@@ -41,20 +32,14 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 1
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.AUTO]
-    _attr_supported_features = (
-        ClimateEntityFeature.TARGET_TEMPERATURE
-        | ClimateEntityFeature.TURN_ON
-        | ClimateEntityFeature.TURN_OFF
-    )
+    _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
     _enable_turn_on_off_backwards_compatibility = False
 
     def __init__(self, coordinator: LynkCoCoordinator, api) -> None:
         super().__init__(coordinator)
         self._api = api
+        self._legacy = Legacy01Commands(api) if coordinator.model == LEGACY_01_MODEL else None
         self._attr_unique_id = f"{coordinator.vin}_climate"
-        # The API's targetTemperature reflects the in-car setting, not the
-        # temperature sent with a remote start_conditioning, so we remember
-        # the last value we set ourselves (restored across restarts below).
         self._target_temp: float | None = None
 
     async def async_added_to_hass(self) -> None:
@@ -68,19 +53,11 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
 
     @property
     def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.coordinator.vin)},
-            "name": MODEL_NAMES.get(self.coordinator.model, f"Lynk & Co {self.coordinator.model}"),
-            "manufacturer": MANUFACTURER,
-            "model": MODEL_NAMES.get(self.coordinator.model, self.coordinator.model),
-            "serial_number": self.coordinator.vin,
-        }
+        return {"identifiers": {(DOMAIN, self.coordinator.vin)}, "name": MODEL_NAMES.get(self.coordinator.model, f"Lynk & Co {self.coordinator.model}"), "manufacturer": MANUFACTURER, "model": MODEL_NAMES.get(self.coordinator.model, self.coordinator.model), "serial_number": self.coordinator.vin}
 
     @property
     def _climate(self) -> dict:
-        if self.coordinator.data is None:
-            return {}
-        return self.coordinator.data.get("climate") or {}
+        return (self.coordinator.data or {}).get("climate") or {}
 
     @property
     def current_temperature(self) -> float | None:
@@ -88,9 +65,7 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
 
     @property
     def target_temperature(self) -> float | None:
-        if self._target_temp is not None:
-            return self._target_temp
-        return self._climate.get("targetTemperature")
+        return self._target_temp if self._target_temp is not None else self._climate.get("targetTemperature")
 
     @property
     def min_temp(self) -> float:
@@ -105,11 +80,7 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
         status = self._climate.get("status")
         if status is None:
             return None
-        # Running states are ACTIVE_COOLING / ACTIVE_HEATING; everything else
-        # (INACTIVE, DISABLED_UNLOCKED_CAR, DRIVE_MODE_ENABLED, ...) is off.
-        if str(status).upper().startswith("ACTIVE"):
-            return HVACMode.AUTO
-        return HVACMode.OFF
+        return HVACMode.AUTO if str(status).upper().startswith("ACTIVE") else HVACMode.OFF
 
     @property
     def hvac_action(self) -> HVACAction | None:
@@ -123,14 +94,25 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
             return HVACAction.HEATING
         return HVACAction.OFF
 
+    async def _start(self, temp: float) -> None:
+        if self._legacy:
+            await self._legacy.start_climate(self.coordinator.vin, level="MEDIUM")
+        else:
+            await self._api.start_conditioning(self.coordinator.vin, int(round(temp)))
+
+    async def _stop(self) -> None:
+        if self._legacy:
+            await self._legacy.stop_climate(self.coordinator.vin)
+        else:
+            await self._api.stop_conditioning(self.coordinator.vin)
+
     async def async_set_temperature(self, **kwargs) -> None:
         temp = kwargs.get(ATTR_TEMPERATURE)
         if temp is None:
             return
-        _LOGGER.info("Setting climate temperature to %s for %s", temp, self.coordinator.vin)
         self._target_temp = float(temp)
         self.async_write_ha_state()
-        await self._api.start_conditioning(self.coordinator.vin, int(round(temp)))
+        await self._start(self._target_temp)
         self._refresh_climate()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
@@ -140,19 +122,12 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
             await self.async_turn_on()
 
     async def async_turn_on(self) -> None:
-        temp = self.target_temperature or DEFAULT_TARGET_TEMP
-        _LOGGER.info("Starting climate for %s", self.coordinator.vin)
-        await self._api.start_conditioning(self.coordinator.vin, int(round(temp)))
+        await self._start(self.target_temperature or DEFAULT_TARGET_TEMP)
         self._refresh_climate()
 
     async def async_turn_off(self) -> None:
-        _LOGGER.info("Stopping climate for %s", self.coordinator.vin)
-        await self._api.stop_conditioning(self.coordinator.vin)
+        await self._stop()
         self._refresh_climate()
 
     def _refresh_climate(self) -> None:
-        self.hass.async_create_task(
-            self.coordinator.async_targeted_refresh(
-                "climate", lambda: self._api.get_climate_state(self.coordinator.vin)
-            )
-        )
+        self.hass.async_create_task(self.coordinator.async_targeted_refresh("climate", lambda: self._api.get_climate_state(self.coordinator.vin)))
