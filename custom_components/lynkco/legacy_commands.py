@@ -41,13 +41,12 @@ class Legacy01Commands:
 
     def __init__(self, api) -> None:
         self._api = api
-        self._session = api._session  # Same HA-managed ClientSession as main API.
+        self._session = api._session
         self._ccc_token: str | None = None
         self._user_id: str | None = None
         self._tls_warning_logged = False
 
     def _warn_legacy_tls(self) -> None:
-        """Log the legacy TLS compatibility exception once per HA session."""
         if self._tls_warning_logged:
             return
         self._tls_warning_logged = True
@@ -58,7 +57,6 @@ class Legacy01Commands:
         )
 
     async def _get_ccc_token(self) -> str:
-        """Exchange the current mobile access token for a legacy CCC token."""
         if self._ccc_token:
             return self._ccc_token
 
@@ -91,7 +89,6 @@ class Legacy01Commands:
         return token
 
     async def _get_user_id(self, vin: str) -> str:
-        """Resolve the legacy driver user id for the vehicle."""
         if self._user_id:
             return self._user_id
 
@@ -121,7 +118,7 @@ class Legacy01Commands:
         self._user_id = user_id
         return user_id
 
-    async def _send_climate(self, vin: str, payload: dict) -> None:
+    async def _send_climate(self, vin: str, payload: dict, *, command: str) -> None:
         ccc_token = await self._get_ccc_token()
         user_id = await self._get_user_id(vin)
         headers = {
@@ -140,25 +137,23 @@ class Legacy01Commands:
             ssl=False,
         ) as response:
             if response.status != 200:
-                # A stale CCC token is a common failure mode. Clear it so the
-                # next attempt performs a fresh exchange; never log response
-                # bodies because they may contain account-specific details.
                 if response.status in (401, 403):
                     self._ccc_token = None
                     self._user_id = None
                 _LOGGER.error(
-                    "Legacy 01 climate command failed (HTTP %s)", response.status
+                    "Legacy 01 climate %s command failed (HTTP %s)",
+                    command,
+                    response.status,
                 )
                 raise HomeAssistantError(
-                    f"Legacy Lynk & Co climate command failed (HTTP {response.status})"
+                    f"Legacy Lynk & Co climate {command} failed (HTTP {response.status})"
                 )
 
-        _LOGGER.info("Legacy Lynk & Co 01 climate command accepted")
+        _LOGGER.info("Legacy Lynk & Co 01 climate %s command accepted", command)
 
     async def start_climate(
         self, vin: str, *, level: str = "MEDIUM", duration_minutes: int = 15
     ) -> None:
-        """Start pre-conditioning using the confirmed legacy command shape."""
         level = level.upper()
         if level not in {"LOW", "MEDIUM", "HIGH"}:
             raise ValueError("Legacy climate level must be LOW, MEDIUM or HIGH")
@@ -174,17 +169,25 @@ class Legacy01Commands:
             "timerId": "1",
             "ventilationItems": ["ALL"],
         }
-        await self._send_climate(vin, payload)
+        await self._send_climate(vin, payload, command="START")
 
     async def stop_climate(self, vin: str) -> None:
-        """Stop legacy pre-conditioning."""
+        """Stop legacy pre-conditioning.
+
+        Some pre-2025 vehicles accept the historical minimal STOP payload but
+        keep the running climate timer active. Sending a complete climate
+        payload (matching the START command shape) reliably tells the vehicle
+        which timer and climate functions must be cancelled.
+        """
         payload = {
+            "climateLevel": "MEDIUM",
             "command": "STOP",
             "dayofweek": ["ONCE"],
-            "startTimeOfDay": "00:00",
             "durationInSeconds": 1,
+            "scheduledTime": 10,
+            "heatItems": ["ALL"],
+            "startTimeOfDay": "00:00",
             "timerId": "1",
             "ventilationItems": ["ALL"],
-            "scheduledTime": 10,
         }
-        await self._send_climate(vin, payload)
+        await self._send_climate(vin, payload, command="STOP")
