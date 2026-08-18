@@ -34,6 +34,8 @@ LEGACY_CLIMATE_URL = (
 )
 
 LEGACY_USER_AGENT = "LynkCo/3016 CFNetwork/1492.0.1 Darwin/23.3.0"
+DEFAULT_CLIMATE_DURATION_MINUTES = 15
+MAX_CLIMATE_DURATION_MINUTES = 20
 
 
 class Legacy01Commands:
@@ -152,12 +154,18 @@ class Legacy01Commands:
         _LOGGER.info("Legacy Lynk & Co 01 climate %s command accepted", command)
 
     async def start_climate(
-        self, vin: str, *, level: str = "MEDIUM", duration_minutes: int = 15
+        self,
+        vin: str,
+        *,
+        level: str = "MEDIUM",
+        duration_minutes: int = DEFAULT_CLIMATE_DURATION_MINUTES,
     ) -> None:
         level = level.upper()
         if level not in {"LOW", "MEDIUM", "HIGH"}:
             raise ValueError("Legacy climate level must be LOW, MEDIUM or HIGH")
-        duration_minutes = max(1, min(int(duration_minutes), 30))
+        duration_minutes = max(
+            1, min(int(duration_minutes), MAX_CLIMATE_DURATION_MINUTES)
+        )
         payload = {
             "climateLevel": level,
             "command": "START",
