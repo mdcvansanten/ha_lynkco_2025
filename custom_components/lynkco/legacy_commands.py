@@ -2,7 +2,15 @@
 
 The pre-2025 01 uses the older connectedcar.cloud remote-control backend.
 This module deliberately exposes only the commands we have verified from the
-legacy integration.  Secrets, tokens and VINs are never logged.
+legacy integration. Secrets, tokens and VINs are never logged.
+
+The legacy AION endpoints currently present a certificate chain that Python's
+standard trust validation cannot build inside Home Assistant. The historical
+pre-2025 integration therefore used an aiohttp connector with ``ssl=False``.
+To keep that compatibility workaround as narrow as possible, TLS verification
+is disabled *per request* only for the three hard-coded Lynk & Co legacy HTTPS
+endpoints below. The normal MY2025+ API and every other Home Assistant request
+continue to use normal certificate validation.
 """
 
 from __future__ import annotations
@@ -36,6 +44,18 @@ class Legacy01Commands:
         self._session = api._session  # Same HA-managed ClientSession as main API.
         self._ccc_token: str | None = None
         self._user_id: str | None = None
+        self._tls_warning_logged = False
+
+    def _warn_legacy_tls(self) -> None:
+        """Log the legacy TLS compatibility exception once per HA session."""
+        if self._tls_warning_logged:
+            return
+        self._tls_warning_logged = True
+        _LOGGER.warning(
+            "Legacy Lynk & Co 01 command backend requires a scoped TLS "
+            "verification compatibility workaround; verification is disabled "
+            "only for hard-coded legacy Lynk & Co command endpoints"
+        )
 
     async def _get_ccc_token(self) -> str:
         """Exchange the current mobile access token for a legacy CCC token."""
@@ -51,8 +71,9 @@ class Legacy01Commands:
         }
         payload = {"deviceUuid": self._api.device_id, "isLogin": True}
 
+        self._warn_legacy_tls()
         async with self._session.post(
-            IAM_VALIDATE_URL, headers=headers, json=payload
+            IAM_VALIDATE_URL, headers=headers, json=payload, ssl=False
         ) as response:
             if response.status != 200:
                 _LOGGER.error(
@@ -80,8 +101,9 @@ class Legacy01Commands:
             "content-type": "application/json",
             "Authorization": f"Bearer {ccc_token}",
         }
+        self._warn_legacy_tls()
         async with self._session.get(
-            DELEGATED_DRIVER_URL.format(vin=vin), headers=headers
+            DELEGATED_DRIVER_URL.format(vin=vin), headers=headers, ssl=False
         ) as response:
             if response.status != 200:
                 _LOGGER.error(
@@ -110,8 +132,12 @@ class Legacy01Commands:
             "Authorization": f"Bearer {ccc_token}",
         }
 
+        self._warn_legacy_tls()
         async with self._session.post(
-            LEGACY_CLIMATE_URL.format(vin=vin), headers=headers, json=payload
+            LEGACY_CLIMATE_URL.format(vin=vin),
+            headers=headers,
+            json=payload,
+            ssl=False,
         ) as response:
             if response.status != 200:
                 # A stale CCC token is a common failure mode. Clear it so the
