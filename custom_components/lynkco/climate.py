@@ -19,6 +19,7 @@ DEFAULT_MIN_TEMP = 16
 DEFAULT_MAX_TEMP = 28
 DEFAULT_TARGET_TEMP = 21
 LEGACY_01_MODEL = "CX11_A1"
+EVENT_CLIMATE_COMMAND = "lynkco_climate_command"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
@@ -94,17 +95,44 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
             return HVACAction.HEATING
         return HVACAction.OFF
 
+    def _fire_command_event(self, command: str, result: str, target_temp: float | None = None, error_type: str | None = None) -> None:
+        """Publish a safe event for HA automations and diagnostics.
+
+        VINs, tokens and account details are deliberately excluded.
+        """
+        data = {
+            "command": command,
+            "result": result,
+            "entity_id": self.entity_id,
+            "legacy_01": self._legacy is not None,
+        }
+        if target_temp is not None:
+            data["target_temperature"] = float(target_temp)
+        if error_type:
+            data["error_type"] = error_type
+        self.hass.bus.async_fire(EVENT_CLIMATE_COMMAND, data)
+
     async def _start(self, temp: float) -> None:
-        if self._legacy:
-            await self._legacy.start_climate(self.coordinator.vin, level="MEDIUM")
-        else:
-            await self._api.start_conditioning(self.coordinator.vin, int(round(temp)))
+        try:
+            if self._legacy:
+                await self._legacy.start_climate(self.coordinator.vin, level="MEDIUM")
+            else:
+                await self._api.start_conditioning(self.coordinator.vin, int(round(temp)))
+        except Exception as err:
+            self._fire_command_event("START", "failed", temp, type(err).__name__)
+            raise
+        self._fire_command_event("START", "accepted", temp)
 
     async def _stop(self) -> None:
-        if self._legacy:
-            await self._legacy.stop_climate(self.coordinator.vin)
-        else:
-            await self._api.stop_conditioning(self.coordinator.vin)
+        try:
+            if self._legacy:
+                await self._legacy.stop_climate(self.coordinator.vin)
+            else:
+                await self._api.stop_conditioning(self.coordinator.vin)
+        except Exception as err:
+            self._fire_command_event("STOP", "failed", error_type=type(err).__name__)
+            raise
+        self._fire_command_event("STOP", "accepted")
 
     async def async_set_temperature(self, **kwargs) -> None:
         temp = kwargs.get(ATTR_TEMPERATURE)
