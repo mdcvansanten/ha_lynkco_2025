@@ -17,7 +17,7 @@ from .legacy_commands import Legacy01Commands
 _LOGGER = logging.getLogger(__name__)
 DEFAULT_MIN_TEMP = 16
 DEFAULT_MAX_TEMP = 28
-DEFAULT_TARGET_TEMP = 21
+DEFAULT_TARGET_TEMP = 22
 LEGACY_01_MODEL = "CX11_A1"
 EVENT_CLIMATE_COMMAND = "lynkco_climate_command"
 
@@ -66,7 +66,7 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
 
     @property
     def target_temperature(self) -> float | None:
-        return self._target_temp if self._target_temp is not None else self._climate.get("targetTemperature")
+        return self._target_temp if self._target_temp is not None else self._climate.get("targetTemperature") or DEFAULT_TARGET_TEMP
 
     @property
     def min_temp(self) -> float:
@@ -95,7 +95,7 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
             return HVACAction.HEATING
         return HVACAction.OFF
 
-    def _fire_command_event(self, command: str, result: str, target_temp: float | None = None, error_type: str | None = None) -> None:
+    def _fire_command_event(self, command: str, result: str, target_temp: float | None = None, error_type: str | None = None, legacy_level: str | None = None) -> None:
         """Publish a safe event for HA automations and diagnostics.
 
         VINs, tokens and account details are deliberately excluded.
@@ -108,20 +108,43 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
         }
         if target_temp is not None:
             data["target_temperature"] = float(target_temp)
+        if legacy_level is not None:
+            data["legacy_level"] = legacy_level
         if error_type:
             data["error_type"] = error_type
         self.hass.bus.async_fire(EVENT_CLIMATE_COMMAND, data)
 
+    @staticmethod
+    def _legacy_level_for_temperature(temp: float) -> str:
+        """Map HA temperature to legacy LOW/MEDIUM/HIGH for controlled testing.
+
+        The old backend does not expose a documented numeric target-temperature
+        field. This mapping is intentionally experimental so we can observe the
+        actual setpoint shown by the vehicle for each legacy climate level.
+        """
+        if temp <= 20:
+            return "LOW"
+        if temp >= 24:
+            return "HIGH"
+        return "MEDIUM"
+
     async def _start(self, temp: float) -> None:
+        legacy_level = None
         try:
             if self._legacy:
-                await self._legacy.start_climate(self.coordinator.vin, level="MEDIUM")
+                legacy_level = self._legacy_level_for_temperature(temp)
+                _LOGGER.info(
+                    "Legacy Lynk & Co 01 climate test mapping: %.1f C -> %s",
+                    temp,
+                    legacy_level,
+                )
+                await self._legacy.start_climate(self.coordinator.vin, level=legacy_level)
             else:
                 await self._api.start_conditioning(self.coordinator.vin, int(round(temp)))
         except Exception as err:
-            self._fire_command_event("START", "failed", temp, type(err).__name__)
+            self._fire_command_event("START", "failed", temp, type(err).__name__, legacy_level)
             raise
-        self._fire_command_event("START", "accepted", temp)
+        self._fire_command_event("START", "accepted", temp, legacy_level=legacy_level)
 
     async def _stop(self) -> None:
         try:
