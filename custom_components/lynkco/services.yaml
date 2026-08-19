@@ -167,3 +167,20 @@ unlock_door:
     vin:
       selector:
         text:
+
+authorize_sensitive_commands:
+  fields:
+    vin:
+      selector:
+        text:
+    pin:
+      required: true
+      selector:
+        text:
+          type: password
+
+lock_sensitive_commands:
+  fields:
+    vin:
+      selector:
+        text:

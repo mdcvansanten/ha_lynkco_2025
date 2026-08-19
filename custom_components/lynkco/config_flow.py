@@ -16,12 +16,23 @@ from .const import (
     CONF_DRIVING_INTERVAL,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
+    CONF_SECURITY_AUTH_MINUTES,
+    CONF_SECURITY_ENABLED,
+    CONF_SECURITY_PIN_HASH,
+    CONF_SECURITY_PIN_SALT,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SECURITY_AUTH_MINUTES,
+    DEFAULT_SECURITY_ENABLED,
     DOMAIN,
     DRIVING_SCAN_INTERVAL,
 )
+from .security import create_pin_hash
 
 _LOGGER = logging.getLogger(__name__)
+
+# This is a transient options-flow field only. The clear-text PIN is never
+# stored in the config entry; only a PBKDF2 hash and random salt are persisted.
+CONF_SECURITY_PIN_INPUT = "security_pin"
 
 
 class LynkCoConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -135,10 +146,30 @@ class LynkCoOptionsFlow(OptionsFlow):
         self._config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
-
+        errors = {}
         current = self._config_entry.options
+
+        if user_input is not None:
+            new_options = dict(user_input)
+            pin = str(new_options.pop(CONF_SECURITY_PIN_INPUT, "")).strip()
+
+            if pin:
+                if not pin.isdigit() or not 4 <= len(pin) <= 8:
+                    errors[CONF_SECURITY_PIN_INPUT] = "invalid_security_pin"
+                else:
+                    salt, pin_hash = create_pin_hash(pin)
+                    new_options[CONF_SECURITY_PIN_SALT] = salt
+                    new_options[CONF_SECURITY_PIN_HASH] = pin_hash
+            else:
+                # Blank means: keep the existing PIN hash, if configured.
+                if current.get(CONF_SECURITY_PIN_SALT):
+                    new_options[CONF_SECURITY_PIN_SALT] = current[CONF_SECURITY_PIN_SALT]
+                if current.get(CONF_SECURITY_PIN_HASH):
+                    new_options[CONF_SECURITY_PIN_HASH] = current[CONF_SECURITY_PIN_HASH]
+
+            if not errors:
+                return self.async_create_entry(title="", data=new_options)
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema({
@@ -150,5 +181,17 @@ class LynkCoOptionsFlow(OptionsFlow):
                     CONF_DRIVING_INTERVAL,
                     default=current.get(CONF_DRIVING_INTERVAL, DRIVING_SCAN_INTERVAL // 60),
                 ): vol.All(vol.Coerce(int), vol.Range(min=1, max=60)),
+                vol.Required(
+                    CONF_SECURITY_ENABLED,
+                    default=current.get(CONF_SECURITY_ENABLED, DEFAULT_SECURITY_ENABLED),
+                ): bool,
+                vol.Required(
+                    CONF_SECURITY_AUTH_MINUTES,
+                    default=current.get(
+                        CONF_SECURITY_AUTH_MINUTES, DEFAULT_SECURITY_AUTH_MINUTES
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=15)),
+                vol.Optional(CONF_SECURITY_PIN_INPUT, default=""): str,
             }),
+            errors=errors,
         )

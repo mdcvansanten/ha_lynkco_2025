@@ -2,37 +2,31 @@
 
 import logging
 
-from homeassistant.components.climate import (
-    ClimateEntity,
-    ClimateEntityFeature,
-    HVACAction,
-    HVACMode,
-)
+from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature, HVACAction, HVACMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER, MODEL_NAMES
 from .coordinator import LynkCoCoordinator
+from .legacy_commands import DEFAULT_CLIMATE_DURATION_MINUTES, Legacy01Commands
 
 _LOGGER = logging.getLogger(__name__)
-
 DEFAULT_MIN_TEMP = 16
 DEFAULT_MAX_TEMP = 28
-DEFAULT_TARGET_TEMP = 21
+DEFAULT_TARGET_TEMP = 22
+DEFAULT_MIN_EV_SOC_PERCENT = 20
+LEGACY_01_MODEL = "CX11_A1"
+EVENT_CLIMATE_COMMAND = "lynkco_climate_command"
 
 
-async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
-) -> None:
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
-    entities = []
-    for vin, coordinator in data["coordinators"].items():
-        entities.append(LynkCoClimate(coordinator, data["api"]))
-    async_add_entities(entities)
+    async_add_entities([LynkCoClimate(coordinator, data["api"]) for coordinator in data["coordinators"].values()])
 
 
 class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
@@ -41,20 +35,14 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 1
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.AUTO]
-    _attr_supported_features = (
-        ClimateEntityFeature.TARGET_TEMPERATURE
-        | ClimateEntityFeature.TURN_ON
-        | ClimateEntityFeature.TURN_OFF
-    )
+    _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
     _enable_turn_on_off_backwards_compatibility = False
 
     def __init__(self, coordinator: LynkCoCoordinator, api) -> None:
         super().__init__(coordinator)
         self._api = api
+        self._legacy = Legacy01Commands(api) if coordinator.model == LEGACY_01_MODEL else None
         self._attr_unique_id = f"{coordinator.vin}_climate"
-        # The API's targetTemperature reflects the in-car setting, not the
-        # temperature sent with a remote start_conditioning, so we remember
-        # the last value we set ourselves (restored across restarts below).
         self._target_temp: float | None = None
 
     async def async_added_to_hass(self) -> None:
@@ -68,19 +56,11 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
 
     @property
     def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.coordinator.vin)},
-            "name": MODEL_NAMES.get(self.coordinator.model, f"Lynk & Co {self.coordinator.model}"),
-            "manufacturer": MANUFACTURER,
-            "model": MODEL_NAMES.get(self.coordinator.model, self.coordinator.model),
-            "serial_number": self.coordinator.vin,
-        }
+        return {"identifiers": {(DOMAIN, self.coordinator.vin)}, "name": MODEL_NAMES.get(self.coordinator.model, f"Lynk & Co {self.coordinator.model}"), "manufacturer": MANUFACTURER, "model": MODEL_NAMES.get(self.coordinator.model, self.coordinator.model), "serial_number": self.coordinator.vin}
 
     @property
     def _climate(self) -> dict:
-        if self.coordinator.data is None:
-            return {}
-        return self.coordinator.data.get("climate") or {}
+        return (self.coordinator.data or {}).get("climate") or {}
 
     @property
     def current_temperature(self) -> float | None:
@@ -88,9 +68,7 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
 
     @property
     def target_temperature(self) -> float | None:
-        if self._target_temp is not None:
-            return self._target_temp
-        return self._climate.get("targetTemperature")
+        return self._target_temp if self._target_temp is not None else self._climate.get("targetTemperature") or DEFAULT_TARGET_TEMP
 
     @property
     def min_temp(self) -> float:
@@ -105,11 +83,7 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
         status = self._climate.get("status")
         if status is None:
             return None
-        # Running states are ACTIVE_COOLING / ACTIVE_HEATING; everything else
-        # (INACTIVE, DISABLED_UNLOCKED_CAR, DRIVE_MODE_ENABLED, ...) is off.
-        if str(status).upper().startswith("ACTIVE"):
-            return HVACMode.AUTO
-        return HVACMode.OFF
+        return HVACMode.AUTO if str(status).upper().startswith("ACTIVE") else HVACMode.OFF
 
     @property
     def hvac_action(self) -> HVACAction | None:
@@ -123,14 +97,114 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
             return HVACAction.HEATING
         return HVACAction.OFF
 
+    def _fire_command_event(self, command: str, result: str, target_temp: float | None = None, error_type: str | None = None, legacy_level: str | None = None, ev_soc: float | None = None) -> None:
+        """Publish a safe event for HA automations and diagnostics.
+
+        VINs, tokens and account details are deliberately excluded.
+        """
+        data = {
+            "command": command,
+            "result": result,
+            "entity_id": self.entity_id,
+            "legacy_01": self._legacy is not None,
+        }
+        if target_temp is not None:
+            data["target_temperature"] = float(target_temp)
+        if legacy_level is not None:
+            data["legacy_level"] = legacy_level
+        if ev_soc is not None:
+            data["ev_soc"] = round(float(ev_soc), 1)
+        if error_type:
+            data["error_type"] = error_type
+        self.hass.bus.async_fire(EVENT_CLIMATE_COMMAND, data)
+
+    @staticmethod
+    def _legacy_level_for_temperature(temp: float) -> str:
+        """Map HA temperature to legacy LOW/MEDIUM/HIGH for controlled testing.
+
+        The legacy service only documents a climate *level*; it does not expose
+        a numeric remote setpoint. We keep this temporary mapping while testing
+        what LOW/MEDIUM/HIGH actually change on the vehicle.
+        """
+        if temp <= 20:
+            return "LOW"
+        if temp >= 24:
+            return "HIGH"
+        return "MEDIUM"
+
+    def _ev_soc_percent(self) -> float | None:
+        """Return traction-battery SOC as a percentage when available."""
+        data = self.coordinator.data or {}
+        try:
+            value = data["charge"]["batteryState"]["stateOfCharge"]
+        except (KeyError, TypeError):
+            return None
+        if value is None:
+            return None
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        return value * 100 if value <= 1.0 else value
+
+    def _ensure_preclimate_soc(self) -> float | None:
+        """Block pre-climate when a known EV SOC is below the configured floor."""
+        soc = self._ev_soc_percent()
+        if soc is None:
+            _LOGGER.warning(
+                "Lynk & Co EV SOC is unavailable; allowing pre-climate because no reliable SOC value was returned"
+            )
+            return None
+        if soc < DEFAULT_MIN_EV_SOC_PERCENT:
+            self._fire_command_event("START", "blocked_low_soc", ev_soc=soc)
+            raise HomeAssistantError(
+                f"Climate not started: EV battery is {soc:.0f}% and the minimum is {DEFAULT_MIN_EV_SOC_PERCENT}%"
+            )
+        return soc
+
+    async def _start(self, temp: float) -> None:
+        ev_soc = self._ensure_preclimate_soc()
+        legacy_level = None
+        try:
+            if self._legacy:
+                legacy_level = self._legacy_level_for_temperature(temp)
+                _LOGGER.info(
+                    "Legacy Lynk & Co 01 climate test mapping: %.1f C -> %s; duration %s min; EV SOC %s",
+                    temp,
+                    legacy_level,
+                    DEFAULT_CLIMATE_DURATION_MINUTES,
+                    "unknown" if ev_soc is None else f"{ev_soc:.1f}%",
+                )
+                await self._legacy.start_climate(
+                    self.coordinator.vin,
+                    level=legacy_level,
+                    duration_minutes=DEFAULT_CLIMATE_DURATION_MINUTES,
+                )
+            else:
+                await self._api.start_conditioning(self.coordinator.vin, int(round(temp)))
+        except Exception as err:
+            self._fire_command_event("START", "failed", temp, type(err).__name__, legacy_level, ev_soc)
+            raise
+        self._fire_command_event("START", "accepted", temp, legacy_level=legacy_level, ev_soc=ev_soc)
+
+    async def _stop(self) -> None:
+        try:
+            if self._legacy:
+                await self._legacy.stop_climate(self.coordinator.vin)
+            else:
+                await self._api.stop_conditioning(self.coordinator.vin)
+        except Exception as err:
+            self._fire_command_event("STOP", "failed", error_type=type(err).__name__)
+            raise
+        self._fire_command_event("STOP", "accepted")
+
     async def async_set_temperature(self, **kwargs) -> None:
         temp = kwargs.get(ATTR_TEMPERATURE)
         if temp is None:
             return
-        _LOGGER.info("Setting climate temperature to %s for %s", temp, self.coordinator.vin)
         self._target_temp = float(temp)
         self.async_write_ha_state()
-        await self._api.start_conditioning(self.coordinator.vin, int(round(temp)))
+        await self._start(self._target_temp)
         self._refresh_climate()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
@@ -140,19 +214,12 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
             await self.async_turn_on()
 
     async def async_turn_on(self) -> None:
-        temp = self.target_temperature or DEFAULT_TARGET_TEMP
-        _LOGGER.info("Starting climate for %s", self.coordinator.vin)
-        await self._api.start_conditioning(self.coordinator.vin, int(round(temp)))
+        await self._start(self.target_temperature or DEFAULT_TARGET_TEMP)
         self._refresh_climate()
 
     async def async_turn_off(self) -> None:
-        _LOGGER.info("Stopping climate for %s", self.coordinator.vin)
-        await self._api.stop_conditioning(self.coordinator.vin)
+        await self._stop()
         self._refresh_climate()
 
     def _refresh_climate(self) -> None:
-        self.hass.async_create_task(
-            self.coordinator.async_targeted_refresh(
-                "climate", lambda: self._api.get_climate_state(self.coordinator.vin)
-            )
-        )
+        self.hass.async_create_task(self.coordinator.async_targeted_refresh("climate", lambda: self._api.get_climate_state(self.coordinator.vin)))

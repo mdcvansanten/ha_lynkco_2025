@@ -5,11 +5,13 @@ import logging
 from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER, MODEL_NAMES
 from .coordinator import LynkCoCoordinator
+from .security import VehicleSecurityManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,18 +22,45 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     entities = []
     for vin, coordinator in data["coordinators"].items():
-        entities.append(LynkCoLock(coordinator, data["api"]))
-        entities.append(LynkCoGloveboxLock(coordinator, data["api"]))
+        entities.append(LynkCoLock(coordinator, data["api"], data["security"]))
+        entities.append(
+            LynkCoGloveboxLock(coordinator, data["api"], data["security"])
+        )
     async_add_entities(entities)
 
 
-class LynkCoLock(CoordinatorEntity, LockEntity):
+class _SensitiveUnlockMixin:
+    """Shared guard for entity-level unlock operations."""
+
+    _security: VehicleSecurityManager
+
+    def _require_unlock_authorization(self) -> None:
+        if self._security.authorized:
+            return
+        if not self._security.configured:
+            raise HomeAssistantError(
+                "Sensitive Lynk & Co commands are locked. Configure a vehicle "
+                "security PIN in the integration options first."
+            )
+        raise HomeAssistantError(
+            "Sensitive Lynk & Co commands are locked. Use the "
+            "lynkco.authorize_sensitive_commands action with your PIN first."
+        )
+
+
+class LynkCoLock(_SensitiveUnlockMixin, CoordinatorEntity, LockEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "door_lock"
 
-    def __init__(self, coordinator: LynkCoCoordinator, api) -> None:
+    def __init__(
+        self,
+        coordinator: LynkCoCoordinator,
+        api,
+        security: VehicleSecurityManager,
+    ) -> None:
         super().__init__(coordinator)
         self._api = api
+        self._security = security
         self._attr_unique_id = f"{coordinator.vin}_lock"
 
     @property
@@ -56,7 +85,7 @@ class LynkCoLock(CoordinatorEntity, LockEntity):
         return status == "LOCKED"
 
     async def async_lock(self, **kwargs) -> None:
-        _LOGGER.info("Locking %s", self.coordinator.vin)
+        _LOGGER.info("Locking vehicle doors")
         await self._api.lock_door(self.coordinator.vin)
         self.hass.async_create_task(
             self.coordinator.async_targeted_refresh(
@@ -65,7 +94,8 @@ class LynkCoLock(CoordinatorEntity, LockEntity):
         )
 
     async def async_unlock(self, **kwargs) -> None:
-        _LOGGER.info("Unlocking %s", self.coordinator.vin)
+        self._require_unlock_authorization()
+        _LOGGER.info("Unlocking vehicle doors after security authorization")
         await self._api.unlock_door(self.coordinator.vin)
         self.hass.async_create_task(
             self.coordinator.async_targeted_refresh(
@@ -74,13 +104,19 @@ class LynkCoLock(CoordinatorEntity, LockEntity):
         )
 
 
-class LynkCoGloveboxLock(CoordinatorEntity, LockEntity):
+class LynkCoGloveboxLock(_SensitiveUnlockMixin, CoordinatorEntity, LockEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "glovebox_lock"
 
-    def __init__(self, coordinator: LynkCoCoordinator, api) -> None:
+    def __init__(
+        self,
+        coordinator: LynkCoCoordinator,
+        api,
+        security: VehicleSecurityManager,
+    ) -> None:
         super().__init__(coordinator)
         self._api = api
+        self._security = security
         self._attr_unique_id = f"{coordinator.vin}_glovebox_lock"
 
     @property
@@ -115,7 +151,7 @@ class LynkCoGloveboxLock(CoordinatorEntity, LockEntity):
         code = kwargs.get("code")
         if not code:
             raise ValueError("A PIN code is required to lock the glovebox")
-        _LOGGER.info("Locking glovebox %s", self.coordinator.vin)
+        _LOGGER.info("Locking vehicle glovebox")
         await self._api.lock_glovebox(self.coordinator.vin, code)
         self.hass.async_create_task(
             self.coordinator.async_targeted_refresh(
@@ -124,7 +160,8 @@ class LynkCoGloveboxLock(CoordinatorEntity, LockEntity):
         )
 
     async def async_unlock(self, **kwargs) -> None:
-        _LOGGER.info("Unlocking glovebox %s", self.coordinator.vin)
+        self._require_unlock_authorization()
+        _LOGGER.info("Unlocking vehicle glovebox after security authorization")
         await self._api.unlock_glovebox(self.coordinator.vin)
         self.hass.async_create_task(
             self.coordinator.async_targeted_refresh(
