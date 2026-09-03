@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import re
 import urllib.parse
 import uuid
 
@@ -25,6 +26,8 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+_MAX_DIAGNOSTIC_BODY = 1500
+
 
 def _compute_signature(secret: str, nonce: str, path: str) -> str:
     return hashlib.sha256((secret + nonce + path).encode("utf-8")).hexdigest()
@@ -37,6 +40,39 @@ def _extract_path(url: str) -> str:
             return "/" + relative.lstrip("/")
     parsed = urllib.parse.urlparse(url)
     return parsed.path
+
+
+def _safe_path(url: str) -> str:
+    """Return a log-safe API path with the VIN removed."""
+    path = _extract_path(url)
+    path = re.sub(r"/vehicle/[^/]+", "/vehicle/<vin>", path)
+    return path
+
+
+def _sanitize_diagnostic(value: object) -> str:
+    """Return a short log-safe representation of a backend response."""
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        except (TypeError, ValueError):
+            text = repr(value)
+
+    # Never leak bearer/JWT material if a backend unexpectedly echoes it.
+    text = re.sub(
+        r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
+        "<jwt-redacted>",
+        text,
+    )
+    text = re.sub(
+        r'(?i)("?(?:access_token|refresh_token|authorization)"?\s*[:=]\s*")([^"]+)(")',
+        r"\1<redacted>\3",
+        text,
+    )
+    if len(text) > _MAX_DIAGNOSTIC_BODY:
+        return text[:_MAX_DIAGNOSTIC_BODY] + "...<truncated>"
+    return text
 
 
 def _decode_jwt_claims(token: str) -> dict:
@@ -121,6 +157,48 @@ class LynkCoAPI:
             "Content-Type": "application/json",
         }
 
+    async def _response_data(self, resp: aiohttp.ClientResponse) -> dict:
+        """Decode a JSON response while tolerating empty/non-JSON command replies."""
+        if resp.content_length == 0:
+            return {}
+        try:
+            data = await resp.json(content_type=None)
+        except (aiohttp.ContentTypeError, json.JSONDecodeError, UnicodeDecodeError):
+            text = await resp.text()
+            return {"raw": text} if text else {}
+        return data if isinstance(data, dict) else {"data": data}
+
+    async def _log_http_error(
+        self,
+        method: str,
+        url: str,
+        resp: aiohttp.ClientResponse,
+    ) -> None:
+        """Log the useful backend error body without credentials or VIN."""
+        try:
+            body = await resp.text()
+        except Exception:  # pragma: no cover - diagnostic best effort only
+            body = "<unable to read response body>"
+        _LOGGER.warning(
+            "Lynk & Co API error: %s %s -> HTTP %s backend=%s",
+            method,
+            _safe_path(url),
+            resp.status,
+            _sanitize_diagnostic(body),
+        )
+
+    def _log_command_success(self, method: str, url: str, status: int, data: dict) -> None:
+        """Log command acknowledgements so MY2022 behavior can be diagnosed."""
+        if "/command/" not in _extract_path(url):
+            return
+        _LOGGER.info(
+            "Lynk & Co command response: %s %s -> HTTP %s backend=%s",
+            method,
+            _safe_path(url),
+            status,
+            _sanitize_diagnostic(data),
+        )
+
     async def _request(self, method: str, url: str, **kwargs) -> dict:
         headers = self._build_headers(url)
         async with self._session.request(method, url, headers=headers, **kwargs) as resp:
@@ -131,14 +209,19 @@ class LynkCoAPI:
                     async with self._session.request(
                         method, url, headers=headers, **kwargs
                     ) as retry:
+                        if retry.status >= 400:
+                            await self._log_http_error(method, url, retry)
                         retry.raise_for_status()
-                        retry_data = await retry.json()
-                        return retry_data if retry_data is not None else {}
+                        retry_data = await self._response_data(retry)
+                        self._log_command_success(method, url, retry.status, retry_data)
+                        return retry_data
+
+            if resp.status >= 400:
+                await self._log_http_error(method, url, resp)
             resp.raise_for_status()
-            if resp.content_length == 0:
-                return {}
-            data = await resp.json()
-            return data if data is not None else {}
+            data = await self._response_data(resp)
+            self._log_command_success(method, url, resp.status, data)
+            return data
 
     async def refresh_tokens(self) -> bool:
         url = f"{LOGIN_B2C_URL}oauth2/v2.0/token"
@@ -157,7 +240,15 @@ class LynkCoAPI:
             },
         ) as resp:
             if resp.status != 200:
-                _LOGGER.error("Token refresh failed: %d", resp.status)
+                try:
+                    body = await resp.text()
+                except Exception:  # pragma: no cover - diagnostic best effort only
+                    body = "<unable to read response body>"
+                _LOGGER.error(
+                    "Token refresh failed: HTTP %d backend=%s",
+                    resp.status,
+                    _sanitize_diagnostic(body),
+                )
                 return False
             data = await resp.json()
             self._access_token = data["access_token"]
@@ -217,7 +308,7 @@ class LynkCoAPI:
         )
 
     async def request_location(self, vin: str) -> dict:
-        """Ask the vehicle to report its current position.
+        """Ask the vehicle to report a fresh position.
 
         Declared but never called by the official app (v2.63.0); verified working
         against the live API. The car answers COMMAND_RECEIVED immediately and
@@ -361,6 +452,14 @@ class LynkCoAPI:
             },
         ) as resp:
             if resp.status != 200:
-                _LOGGER.error("Token exchange failed: %d", resp.status)
+                try:
+                    body = await resp.text()
+                except Exception:  # pragma: no cover - diagnostic best effort only
+                    body = "<unable to read response body>"
+                _LOGGER.error(
+                    "Token exchange failed: HTTP %d backend=%s",
+                    resp.status,
+                    _sanitize_diagnostic(body),
+                )
                 return None
             return await resp.json()
