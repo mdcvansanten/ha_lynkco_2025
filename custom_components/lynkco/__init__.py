@@ -3,10 +3,12 @@
 import logging
 from datetime import timedelta
 
+import aiohttp
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -92,6 +94,7 @@ GLOVEBOX_LOCK_SCHEMA = vol.Schema({
     vol.Required(ATTR_PIN): vol.All(cv.string, vol.Match(r"^\d{4}$")),
 })
 
+
 def _all_vins(hass: HomeAssistant) -> list[str]:
     """Return all known VINs across all config entries."""
     vins = []
@@ -158,8 +161,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         on_token_refresh=_persist_tokens,
     )
 
-    await api.validate_session()
-    vehicles = await api.get_vehicles()
+    # A short Lynk/Azure/DNS outage must not leave the entry permanently in
+    # "setup failed". ConfigEntryNotReady lets Home Assistant retry later.
+    try:
+        session_valid = await api.validate_session()
+        if not session_valid:
+            _LOGGER.debug("Session validation did not return HTTP 200; vehicle request may refresh the token")
+        vehicles = await api.get_vehicles()
+    except (aiohttp.ClientError, TimeoutError) as err:
+        raise ConfigEntryNotReady(
+            f"Temporary Lynk & Co connectivity error during setup: {err}"
+        ) from err
 
     if not vehicles:
         _LOGGER.error("No vehicles found")
