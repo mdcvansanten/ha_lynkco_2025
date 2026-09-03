@@ -19,7 +19,9 @@ from .const import CLIMATE_SCAN_INTERVAL, CONF_DRIVING_INTERVAL, CONF_SCAN_INTER
 
 _LOGGER = logging.getLogger(__name__)
 
-REFRESH_RETRY_DELAYS = [3, 5, 10]
+# These are incremental waits, so the actual readback checkpoints are
+# approximately 3, 8, 18 and 30 seconds after the command was sent.
+REFRESH_RETRY_DELAYS = [3, 5, 10, 12]
 FAST_POLL_BASE_INTERVAL = timedelta(seconds=CLIMATE_SCAN_INTERVAL)  # finest fast-poll cadence
 HOME_POLL_INTERVAL = timedelta(minutes=5)
 
@@ -246,19 +248,34 @@ class LynkCoCoordinator(DataUpdateCoordinator):
             return
 
         old_value = self.data.get(data_key)
+        elapsed = 0
 
         for delay in REFRESH_RETRY_DELAYS:
             await asyncio.sleep(delay)
+            elapsed += delay
             try:
                 new_value = await fetch_fn()
             except Exception:
-                _LOGGER.debug("Targeted refresh of %s failed, will retry", data_key)
+                _LOGGER.debug(
+                    "Targeted refresh of %s failed at +%ss, will retry",
+                    data_key,
+                    elapsed,
+                )
                 continue
 
             if new_value != old_value:
                 self.data = {**self.data, data_key: new_value, "last_updated": dt_util.now()}
                 self.async_update_listeners()
-                _LOGGER.debug("Targeted refresh of %s detected change", data_key)
+                _LOGGER.debug(
+                    "Targeted refresh of %s detected change at +%ss",
+                    data_key,
+                    elapsed,
+                )
                 return
 
-        _LOGGER.debug("Targeted refresh of %s: no change after %d retries", data_key, len(REFRESH_RETRY_DELAYS))
+        _LOGGER.debug(
+            "Targeted refresh of %s: no change after %ss (%d retries)",
+            data_key,
+            elapsed,
+            len(REFRESH_RETRY_DELAYS),
+        )
