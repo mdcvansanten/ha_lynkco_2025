@@ -5,6 +5,7 @@ cd /config
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="/config/backups/lynkco-beta3-$STAMP"
 SOURCE_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+COMPANION_B64="/tmp/lynkco_01_v0.7.0-beta.12.zip.b64"
 COMPANION_ZIP="/tmp/lynkco_01_v0.7.0-beta.12.zip"
 COMPANION_DIR="/tmp/lynkco_01_v0.7.0-beta.12-extracted"
 
@@ -32,10 +33,31 @@ cp -a "$SOURCE_DIR/custom_components/lynkco" /config/custom_components/lynkco
 
 grep '"version"' /config/custom_components/lynkco/manifest.json
 
-printf '\n=== Companion v0.7.0-beta.12 uitpakken ===\n'
-rm -f "$COMPANION_ZIP"
+printf '\n=== Companion v0.7.0-beta.12 opbouwen en controleren ===\n'
+rm -f "$COMPANION_B64" "$COMPANION_ZIP"
 rm -rf "$COMPANION_DIR"
-base64 -d "$SOURCE_DIR/companion/lynkco_01_v0.7.0-beta.12.zip.b64" > "$COMPANION_ZIP"
+
+cat \
+  "$SOURCE_DIR/companion/beta12_zip.part1" \
+  "$SOURCE_DIR/companion/beta12_zip.part2" \
+  "$SOURCE_DIR/companion/beta12_zip.part3" \
+  "$SOURCE_DIR/companion/beta12_zip.part4" \
+  "$SOURCE_DIR/companion/beta12_zip.part5" \
+  > "$COMPANION_B64"
+
+base64 -d "$COMPANION_B64" > "$COMPANION_ZIP"
+
+python3 - <<'PY'
+import sys, zipfile
+p = '/tmp/lynkco_01_v0.7.0-beta.12.zip'
+with zipfile.ZipFile(p) as zf:
+    bad = zf.testzip()
+    if bad:
+        print(f'FOUT: CRC-controle mislukt voor {bad}')
+        sys.exit(1)
+print('Companion ZIP CRC OK')
+PY
+
 mkdir -p "$COMPANION_DIR"
 python3 -m zipfile -e "$COMPANION_ZIP" "$COMPANION_DIR"
 
