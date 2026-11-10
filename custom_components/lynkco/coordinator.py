@@ -11,10 +11,11 @@ from homeassistant.util import dt as dt_util
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import LynkCoAPI
+from .api import LynkCoAPI, LynkCoAuthError
 from .const import CLIMATE_SCAN_INTERVAL, CONF_DRIVING_INTERVAL, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DRIVING_SCAN_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,14 +74,29 @@ class LynkCoCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict:
         try:
             data = await self._async_fetch_all()
+        except LynkCoAuthError as err:
+            raise ConfigEntryAuthFailed("Lynk & Co login has expired") from err
         except Exception as err:
-            if await self.api.refresh_tokens():
+            # Preserve the previous retry, but never hide a rejected refresh token.
+            try:
+                refreshed = await self.api.refresh_tokens()
+            except LynkCoAuthError as auth_err:
+                raise ConfigEntryAuthFailed("Lynk & Co login has expired") from auth_err
+            except Exception as refresh_err:
+                raise UpdateFailed(
+                    f"API error and refresh unavailable: {type(refresh_err).__name__}"
+                ) from refresh_err
+            if refreshed:
                 try:
                     data = await self._async_fetch_all()
+                except LynkCoAuthError as auth_err:
+                    raise ConfigEntryAuthFailed("Lynk & Co login has expired") from auth_err
                 except Exception as retry_err:
-                    raise UpdateFailed(f"API error after refresh: {retry_err}") from retry_err
+                    raise UpdateFailed(
+                        f"API error after refresh: {type(retry_err).__name__}"
+                    ) from retry_err
             else:
-                raise UpdateFailed(f"API error: {err}") from err
+                raise UpdateFailed(f"API error: {type(err).__name__}") from err
 
         # Store propulsion type for entity filtering
         propulsion = (data["metadata"].get("vehicle") or {}).get("propulsionType")

@@ -24,6 +24,9 @@ DEFAULT_MIN_TEMP = 16
 DEFAULT_MAX_TEMP = 28
 DEFAULT_TARGET_TEMP = 21
 
+# HA 2026.11 uses native_* temperatures; older versions use legacy properties.
+_LEGACY_TEMPERATURE_API = not hasattr(ClimateEntity, "native_temperature_unit")
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -38,9 +41,9 @@ async def async_setup_entry(
 class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "climate"
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 1
-    _attr_hvac_modes = [HVACMode.OFF, HVACMode.AUTO]
+    _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT_COOL]
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
         | ClimateEntityFeature.TURN_ON
@@ -83,14 +86,25 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
         return self.coordinator.data.get("climate") or {}
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         return self._climate.get("interiorTemperature")
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         if self._target_temp is not None:
             return self._target_temp
         return self._climate.get("targetTemperature")
+
+    if _LEGACY_TEMPERATURE_API:
+        _attr_temperature_unit = UnitOfTemperature.CELSIUS
+
+        @property
+        def current_temperature(self) -> float | None:
+            return self.native_current_temperature
+
+        @property
+        def target_temperature(self) -> float | None:
+            return self.native_target_temperature
 
     @property
     def min_temp(self) -> float:
@@ -108,7 +122,7 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
         # Running states are ACTIVE_COOLING / ACTIVE_HEATING; everything else
         # (INACTIVE, DISABLED_UNLOCKED_CAR, DRIVE_MODE_ENABLED, ...) is off.
         if str(status).upper().startswith("ACTIVE"):
-            return HVACMode.AUTO
+            return HVACMode.HEAT_COOL
         return HVACMode.OFF
 
     @property
@@ -140,7 +154,7 @@ class LynkCoClimate(CoordinatorEntity, RestoreEntity, ClimateEntity):
             await self.async_turn_on()
 
     async def async_turn_on(self) -> None:
-        temp = self.target_temperature or DEFAULT_TARGET_TEMP
+        temp = self.native_target_temperature or DEFAULT_TARGET_TEMP
         _LOGGER.info("Starting climate for %s", self.coordinator.vin)
         await self._api.start_conditioning(self.coordinator.vin, int(round(temp)))
         self._refresh_climate()
