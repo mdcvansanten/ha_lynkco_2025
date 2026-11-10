@@ -29,6 +29,11 @@ _LOGGER = logging.getLogger(__name__)
 _MAX_DIAGNOSTIC_BODY = 1500
 
 
+class LynkCoAuthError(Exception):
+    """Lynk & Co requires a fresh login; not a transient network problem."""
+
+
+
 def _compute_signature(secret: str, nonce: str, path: str) -> str:
     return hashlib.sha256((secret + nonce + path).encode("utf-8")).hexdigest()
 
@@ -209,6 +214,8 @@ class LynkCoAPI:
                     async with self._session.request(
                         method, url, headers=headers, **kwargs
                     ) as retry:
+                        if retry.status == 401:
+                            raise LynkCoAuthError("Still unauthorized after token refresh")
                         if retry.status >= 400:
                             await self._log_http_error(method, url, retry)
                         retry.raise_for_status()
@@ -244,11 +251,17 @@ class LynkCoAPI:
                     body = await resp.text()
                 except Exception:  # pragma: no cover - diagnostic best effort only
                     body = "<unable to read response body>"
-                _LOGGER.error(
+                _LOGGER.warning(
                     "Token refresh failed: HTTP %d backend=%s",
                     resp.status,
                     _sanitize_diagnostic(body),
                 )
+                # 400 invalid_grant / revoked token requires Repairs -> reauth.
+                # 429 and 5xx can be temporary and must not demand a new login.
+                if 400 <= resp.status < 500 and resp.status != 429:
+                    raise LynkCoAuthError(
+                        f"Refresh token was rejected (HTTP {resp.status})"
+                    )
                 return False
             data = await resp.json()
             self._access_token = data["access_token"]
