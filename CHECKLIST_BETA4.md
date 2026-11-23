@@ -10,7 +10,7 @@ Deze lijst staat bewust in GitHub, zodat hij behouden blijft wanneer je later te
 - [ ] Daadwerkelijk herstel uit deze back-up niet getest (niet vereist voor deze update).
 - [ ] Noteer de huidige entiteiten voor EV SOC, charging_status, climate en device_tracker.
 - [ ] Controleer packages/lynkco_01_controls.yaml en de bestaande Lovelace-bediening; maak zo nodig een kopie.
-- [ ] Controleer automations en scripts met hvac_mode: auto. Beta.4 gebruikt heat_cool.
+- [x] Geen hvac_mode: auto gevonden in /config/automations.yaml, /config/scripts.yaml en /config/packages (terminalcontrole). Beta.4 gebruikt heat_cool.
 - [ ] Update de upstream (b12e) integratie nog NIET rechtstreeks vanuit HACS.
 
 ## B. Klaarzetten — zonder de actieve installatie te wijzigen
