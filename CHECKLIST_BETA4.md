@@ -5,7 +5,8 @@ Deze lijst staat bewust in GitHub, zodat hij behouden blijft wanneer je later te
 ## A. Eerst controleren — geen updates installeren
 - [ ] Controleer welke integratiebron HACS momenteel gebruikt: onze mdcvansanten-fork of upstream b12e.
 - [ ] Noteer Home Assistant Core, OS, HACS en Lynk & Co versienummers.
-- [ ] Maak een volledige Home Assistant back-up en controleer dat hij beschikbaar is.
+- [x] Home Assistant back-up eerder vandaag na OS-update gemaakt (door gebruiker gemeld).
+- [ ] Controleer dat deze back-up compleet en terugzetbaar is.
 - [ ] Noteer de huidige entiteiten voor EV SOC, charging_status, climate en device_tracker.
 - [ ] Controleer packages/lynkco_01_controls.yaml en de bestaande Lovelace-bediening; maak zo nodig een kopie.
 - [ ] Controleer automations en scripts met hvac_mode: auto. Beta.4 gebruikt heat_cool.
