@@ -15,9 +15,13 @@ Deze lijst staat bewust in GitHub, zodat hij behouden blijft wanneer je later te
 - [x] Afzonderlijke testbranch aangemaakt vanuit volvo-functies-v0.6.3-beta3.
 - [x] HA 2026.11 native klimaat-API en gerichte reauth-aanpassingen voorbereid.
 - [x] Nieuwe check-first installer beschikbaar; companion blijft behouden.
-- [ ] Clone/download de beta.4 branch zoals in LYNKCO_MY2022_BETA4.md.
-- [ ] Voer uit: sh /config/lynkco-beta4-prep/install_beta4.sh --check
-- [ ] Bekijk uitkomst HA core check, Python syntax, HACS/Hassfest en eventuele waarschuwingen.
+- [x] Clone/download de beta.4 branch zoals in LYNKCO_MY2022_BETA4.md.
+- [x] Voer uit: sh /config/lynkco-beta4-prep/install_beta4.sh --check
+- [x] HA core check: Processing... Done. Command completed successfully.
+- [x] Python-syntax: versie 0.6.3-beta.4 OK.
+- [x] Actieve integratie 0.6.3-beta.3 vastgesteld; package en dashboard blijven ongewijzigd.
+- [x] Geen hvac_mode: auto gevonden in /config/packages (overige automatiseringen nog te controleren).
+- [ ] GitHub HACS/Hassfest-validatie controleren.
 - [ ] Controleer op dit moment of HA geheel stabiel draait.
 
 ## C. Gecontroleerde activering (alleen als B goed is)
