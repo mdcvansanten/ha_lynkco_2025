@@ -154,6 +154,30 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(self.module.LynkCoTransientError):
             await api.refresh_tokens()
 
+    async def test_validate_session_rejects_valid_false(self):
+        session = _Session([], validations=[(200, {"valid": False})])
+        api = self._api(session)
+        self.assertFalse(await api.validate_session())
+
+    async def test_server_error_is_temporary_not_reauth(self):
+        session = _Session([], tokens=[(503, {"error": "unavailable"})])
+        api = self._api(session)
+        with self.assertRaises(self.module.LynkCoTransientError):
+            await api.refresh_tokens()
+
+    async def test_transport_timeout_does_not_attempt_token_refresh(self):
+        class TimedOutSession(_Session):
+            def request(self, *args, **kwargs):
+                self.request_count += 1
+                raise TimeoutError("simulated network stall")
+
+        session = TimedOutSession([])
+        api = self._api(session)
+        with self.assertRaises(TimeoutError):
+            await api._request("GET", "https://example.test/battery")
+        self.assertEqual(session.token_count, 0)
+        self.assertEqual(session.validate_count, 0)
+
     async def test_concurrent_401_does_not_double_refresh(self):
         session = _Session(
             [(401, {}), (401, {}), (200, {}), (200, {})],
