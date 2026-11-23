@@ -14,11 +14,11 @@ Deze lijst is opgeslagen in de eigen GitHub-repository. Alleen vakjes afvinken n
 - [ ] Controleer of upstream Marketplace automatische updates niet over de fork heen installeren.
 
 ## Eerst controleren
-- [ ] Clone `lynkco-my2022-v0.6.3-beta5-session` in `/config/lynkco-beta5-prep`.
-- [ ] Voer `sh /config/lynkco-beta5-prep/install_beta5.sh --check` uit.
+- [x] Clone `lynkco-my2022-v0.6.3-beta5-session` in `/config/lynkco-beta5-prep` (afgeleid uit uitgevoerde check).
+- [x] `sh /config/lynkco-beta5-prep/install_beta5.sh --check` uitgevoerd.
 - [x] Python syntax en 10 offline mock-tests geslaagd in GitHub Actions.
-- [ ] Zelfde 10 tests op Home Assistant met `--check` geslaagd.
-- [ ] Home Assistant-configuratiecheck geslaagd.
+- [x] 10/10 offline regressietests op Home Assistant geslaagd (gebruikersuitvoer).
+- [x] `ha core check`: `Command completed successfully` (gebruikersuitvoer).
 - [x] Hassfest-validatie geslaagd in GitHub Actions.
 - [x] HACS-publicatiecheck faalt op GitHub-repositorytopics en uitgeschakelde Issues (geen code-testresultaat); bewust geen repo-instellingen aangepast.
 
