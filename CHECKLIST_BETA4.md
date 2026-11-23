@@ -4,7 +4,8 @@ Deze lijst staat bewust in GitHub, zodat hij behouden blijft wanneer je later te
 
 ## A. Eerst controleren — geen updates installeren
 - [x] Vastgesteld: in HA 2026.11 is HACS vervangen door de ingebouwde Marktplaats (screenshot + officiële documentatie).
-- [ ] Open Instellingen → Marktplaats → Lynk & Co en controleer de achterliggende GitHub-repository (b12e versus mdcvansanten).
+- [x] De aangeboden Lynk & Co-update verwijst naar b12e/ha_lynkco_2025 (getoond via GitHub vanuit Marketplace).
+- [ ] Officiële update vanuit Marketplace niet installeren; losse beta4-installatie behouden.
 - [ ] Noteer Home Assistant Core, OS, HACS en Lynk & Co versienummers.
 - [x] Volledige Home Assistant back-up na OS-update circa twee uur geleden afgerond (door gebruiker bevestigd).
 - [x] Zowel lokale kopie als OneDrive-kopie opgeslagen (door gebruiker bevestigd).
