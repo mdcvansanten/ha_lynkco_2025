@@ -3,7 +3,8 @@
 Deze lijst staat bewust in GitHub, zodat hij behouden blijft wanneer je later terugkomt. Open het bestand in GitHub, klik op het potlood (Edit), wijzig [ ] in [x] voor uitgevoerde stappen en klik Commit changes. Laat ongeteste stappen open.
 
 ## A. Eerst controleren — geen updates installeren
-- [ ] Controleer welke integratiebron HACS momenteel gebruikt: onze mdcvansanten-fork of upstream b12e.
+- [x] Vastgesteld: in HA 2026.11 is HACS vervangen door de ingebouwde Marktplaats (screenshot + officiële documentatie).
+- [ ] Open Instellingen → Marktplaats → Lynk & Co en controleer de achterliggende GitHub-repository (b12e versus mdcvansanten).
 - [ ] Noteer Home Assistant Core, OS, HACS en Lynk & Co versienummers.
 - [x] Volledige Home Assistant back-up na OS-update circa twee uur geleden afgerond (door gebruiker bevestigd).
 - [x] Zowel lokale kopie als OneDrive-kopie opgeslagen (door gebruiker bevestigd).
