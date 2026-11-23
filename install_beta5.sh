@@ -42,6 +42,8 @@ if [ -d /config/packages ]; then
  echo "Controle op HVAC auto (eventueel handmatig migreren):"
  grep -Rin -E 'hvac_mode[[:space:]]*:[[:space:]]*auto' /config/packages 2>/dev/null || true
 fi
+echo "Offline regressietests sessies en tokens:"
+python3 -m unittest discover -s "$SRC_DIR/tests" -p test_beta5_session.py -v
 echo "Configuratiecheck vooraf:"
 ha core check
 if [ "$MODE" = "--check" ]; then
