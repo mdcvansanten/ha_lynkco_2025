@@ -15,7 +15,7 @@ Deze lijst is opgeslagen in de eigen GitHub-repository. Alleen vakjes afvinken n
 ## Eerst controleren
 - [ ] Clone `lynkco-my2022-v0.6.3-beta5-session` in `/config/lynkco-beta5-prep`.
 - [ ] Voer `sh /config/lynkco-beta5-prep/install_beta5.sh --check` uit.
-- [ ] Syntaxcheck en 7 offline unittests geslaagd.
+- [ ] Syntaxcheck en 10 offline unittests geslaagd.
 - [ ] Home Assistant-configuratiecheck geslaagd.
 - [ ] HACS/hassfest/andere beschikbare CI-checks bekeken of afwijkingen vastgelegd.
 
