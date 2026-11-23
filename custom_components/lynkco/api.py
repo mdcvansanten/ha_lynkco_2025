@@ -1,9 +1,11 @@
 """API client for Lynk & Co vehicles."""
 
+import asyncio
 import hashlib
 import json
 import logging
 import re
+import time
 import urllib.parse
 import uuid
 
@@ -27,10 +29,16 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 _MAX_DIAGNOSTIC_BODY = 1500
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
+SESSION_RECLAIM_INTERVAL = 60  # At most one automatic session claim per minute.
 
 
 class LynkCoAuthError(Exception):
-    """Lynk & Co requires a fresh login; not a transient network problem."""
+    """Refresh token permanently rejected: ask Home Assistant to reauthenticate."""
+
+
+class LynkCoTransientError(Exception):
+    """Temporary token endpoint or network failure; do not ask for a new login."""
 
 
 
@@ -103,6 +111,10 @@ class LynkCoAPI:
         self._refresh_token = refresh_token
         self._device_id = device_id
         self._on_token_refresh = on_token_refresh
+        self._refresh_lock = asyncio.Lock()
+        # A 403 can be session takeover only on a previously successful endpoint.
+        self._working_paths: set[str] = set()
+        self._last_reclaim: float | None = None
         self._claims: dict = {}
         self._update_claims()
 
@@ -205,82 +217,148 @@ class LynkCoAPI:
         )
 
     async def _request(self, method: str, url: str, **kwargs) -> dict:
-        headers = self._build_headers(url)
-        async with self._session.request(method, url, headers=headers, **kwargs) as resp:
-            if resp.status == 401:
-                _LOGGER.debug("Got 401, attempting token refresh")
-                if await self.refresh_tokens():
-                    headers = self._build_headers(url)
-                    async with self._session.request(
-                        method, url, headers=headers, **kwargs
-                    ) as retry:
-                        if retry.status == 401:
-                            raise LynkCoAuthError("Still unauthorized after token refresh")
-                        if retry.status >= 400:
-                            await self._log_http_error(method, url, retry)
-                        retry.raise_for_status()
-                        retry_data = await self._response_data(retry)
-                        self._log_command_success(method, url, retry.status, retry_data)
-                        return retry_data
+        """Retry a 401 after one token refresh, or a known 403 after session reclaim.
 
-            if resp.status >= 400:
-                await self._log_http_error(method, url, resp)
-            resp.raise_for_status()
-            data = await self._response_data(resp)
-            self._log_command_success(method, url, resp.status, data)
-            return data
+        An unknown 403 must never trigger a session reclaim: MY2022 endpoints
+        may be unsupported, and claiming would eject the official phone app.
+        """
+        old_token = self._access_token
+        path = _extract_path(url)
+        kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+        headers = self._build_headers(url)
+
+        async with self._session.request(method, url, headers=headers, **kwargs) as resp:
+            taken = resp.status == 403 and path in self._working_paths
+            if resp.status not in (401,) and not taken:
+                return await self._read_response(method, url, resp)
+
+        reclaimed = False
+        if taken:
+            reclaimed = await self._reclaim_session()
+        else:
+            # Multiple simultaneous 401s must not refresh the same token twice.
+            async with self._refresh_lock:
+                if old_token == self._access_token:
+                    await self._refresh_tokens_locked()
+
+        headers = self._build_headers(url)
+        async with self._session.request(method, url, headers=headers, **kwargs) as retry:
+            if retry.status == 401 and not taken:
+                raise LynkCoAuthError("Still unauthorized after token refresh")
+            if retry.status == 403 and reclaimed:
+                # A 403 even after a successful reclaim is likely an unsupported
+                # endpoint. Do not keep claiming the session on future polls.
+                self._working_paths.discard(path)
+            return await self._read_response(method, url, retry)
+
+    async def _read_response(self, method: str, url: str, resp: aiohttp.ClientResponse) -> dict:
+        """Preserve MY2022 diagnostics and status-aware readback."""
+        if resp.status >= 400:
+            await self._log_http_error(method, url, resp)
+        resp.raise_for_status()
+        self._working_paths.add(_extract_path(url))
+        data = await self._response_data(resp)
+        self._log_command_success(method, url, resp.status, data)
+        return data
 
     async def refresh_tokens(self) -> bool:
+        """Refresh once, serialized with all other refreshes and session claims."""
+        async with self._refresh_lock:
+            return await self._refresh_tokens_locked()
+
+    async def _refresh_tokens_locked(self) -> bool:
+        """Only call while holding _refresh_lock."""
         url = f"{LOGIN_B2C_URL}oauth2/v2.0/token"
-        async with self._session.post(
-            url,
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            data={
-                "client_id": CLIENT_ID,
-                "grant_type": "refresh_token",
-                "refresh_token": self._refresh_token,
-                "scope": SCOPE,
-                "redirect_uri": REDIRECT_URI,
-            },
-        ) as resp:
-            if resp.status != 200:
-                try:
-                    body = await resp.text()
-                except Exception:  # pragma: no cover - diagnostic best effort only
-                    body = "<unable to read response body>"
-                _LOGGER.warning(
-                    "Token refresh failed: HTTP %d backend=%s",
-                    resp.status,
-                    _sanitize_diagnostic(body),
-                )
-                # 400 invalid_grant / revoked token requires Repairs -> reauth.
-                # 429 and 5xx can be temporary and must not demand a new login.
-                if 400 <= resp.status < 500 and resp.status != 429:
-                    raise LynkCoAuthError(
-                        f"Refresh token was rejected (HTTP {resp.status})"
+        try:
+            async with self._session.post(
+                url,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={
+                    "client_id": CLIENT_ID,
+                    "grant_type": "refresh_token",
+                    "refresh_token": self._refresh_token,
+                    "scope": SCOPE,
+                    "redirect_uri": REDIRECT_URI,
+                },
+                timeout=REQUEST_TIMEOUT,
+            ) as resp:
+                if resp.status != 200:
+                    # Avoid including token-service response text, which might
+                    # contain credentials or personally identifying information.
+                    _LOGGER.warning("Lynk & Co token endpoint HTTP %d", resp.status)
+                    if 400 <= resp.status < 500 and resp.status != 429:
+                        raise LynkCoAuthError(
+                            f"Refresh token rejected (HTTP {resp.status})"
+                        )
+                    raise LynkCoTransientError(
+                        f"Token refresh temporarily unavailable (HTTP {resp.status})"
                     )
+                data = await resp.json(content_type=None)
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise LynkCoTransientError(
+                f"Token endpoint unreachable ({type(err).__name__})"
+            ) from err
+        except (ValueError, TypeError, KeyError) as err:
+            raise LynkCoTransientError(
+                f"Invalid token endpoint response ({type(err).__name__})"
+            ) from err
+
+        if not isinstance(data, dict) or not isinstance(data.get("access_token"), str):
+            raise LynkCoTransientError("Token endpoint response lacks an access token")
+        self._access_token = data["access_token"]
+        self._refresh_token = data.get("refresh_token", self._refresh_token)
+        self._update_claims()
+        _LOGGER.debug("Lynk & Co tokens refreshed successfully")
+        if self._on_token_refresh:
+            self._on_token_refresh(self._access_token, self._refresh_token)
+        return True
+
+    async def _reclaim_session(self) -> bool:
+        """Reclaim a confirmed taken session at most once per minute.
+
+        This can log the official phone app out. Never call for a new/unknown
+        or permanently forbidden MY2022 endpoint.
+        """
+        async with self._refresh_lock:
+            if (
+                self._last_reclaim is not None
+                and time.monotonic() - self._last_reclaim < SESSION_RECLAIM_INTERVAL
+            ):
                 return False
-            data = await resp.json()
-            self._access_token = data["access_token"]
-            self._refresh_token = data.get("refresh_token", self._refresh_token)
-            self._update_claims()
-            _LOGGER.debug("Tokens refreshed successfully")
-            if self._on_token_refresh:
-                self._on_token_refresh(self._access_token, self._refresh_token)
-            return True
+            _LOGGER.warning(
+                "Lynk & Co session may have moved to another device; "
+                "trying a single session reclaim"
+            )
+            try:
+                reclaimed = await self.validate_session()
+            finally:
+                # Also throttle failures/timeouts; avoid a storm of requests.
+                self._last_reclaim = time.monotonic()
+            if not reclaimed:
+                _LOGGER.warning("Lynk & Co session reclaim not accepted")
+            return reclaimed
 
     async def validate_session(self) -> bool:
+        """Validate/claim this session, including a 'valid': false response."""
         url = f"{IAM_BASE}/validate-session"
         headers = self._build_headers(url)
         async with self._session.post(
             url,
             headers=headers,
             json={"deviceUuid": self._device_id, "isLogin": True},
+            timeout=REQUEST_TIMEOUT,
         ) as resp:
-            return resp.status == 200
+            if resp.status != 200:
+                _LOGGER.debug("Lynk & Co validate-session HTTP %d", resp.status)
+                return False
+            try:
+                data = await resp.json(content_type=None)
+            except (aiohttp.ClientError, ValueError):
+                return True  # Older API variants may answer empty/non-JSON.
+            return not (isinstance(data, dict) and data.get("valid") is False)
 
     async def get_vehicles(self) -> list[dict]:
         url = f"{LOVE_BASE}/list/vehicles"
