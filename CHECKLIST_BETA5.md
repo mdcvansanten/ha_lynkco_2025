@@ -23,8 +23,9 @@ Deze lijst is opgeslagen in de eigen GitHub-repository. Alleen vakjes afvinken n
 - [x] HACS-publicatiecheck faalt op GitHub-repositorytopics en uitgeschakelde Issues (geen code-testresultaat); bewust geen repo-instellingen aangepast.
 
 ## Installeren (alleen na groene controles)
-- [ ] Voer `sh /config/lynkco-beta5-prep/install_beta5.sh --apply` uit.
-- [ ] Nieuwe backupmap in `/config/backups/lynkco-before-beta5-...` genoteerd.
+- [x] `sh /config/lynkco-beta5-prep/install_beta5.sh --apply` uitgevoerd; beta.5 geplaatst, 10/10 regressietests geslaagd (gebruikersuitvoer).
+- [x] Nieuwe backupmap: `/config/backups/lynkco-before-beta5-20261123-212900` (volgens uitvoer).
+- [ ] Post-installatie `ha core check` nog afzonderlijk bevestigen: deze regel ontbreekt in de geplakte uitvoer.
 - [ ] `ha core restart` uitgevoerd.
 - [ ] Nieuwe versie `0.6.3-beta.5` actief; geen onbekende entiteiten verdwenen.
 
