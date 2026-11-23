@@ -29,7 +29,8 @@ Deze lijst staat bewust in GitHub, zodat hij behouden blijft wanneer je later te
 - [ ] Controleer op dit moment of HA geheel stabiel draait.
 
 ## C. Gecontroleerde activering (alleen als B goed is)
-- [ ] Voer uit: sh /config/lynkco-beta4-prep/install_beta4.sh --apply
+- [x] Uitgevoerd: sh /config/lynkco-beta4-prep/install_beta4.sh --apply (succes, beide ha core checks geslaagd).
+- [x] Back-up gemaakt: /config/backups/lynkco-before-beta4-20261123-171943 (volgens terminaluitvoer; inhoud niet zelfstandig gecontroleerd).
 - [ ] Noteer en controleer de nieuwe back-upmap /config/backups/lynkco-before-beta4-*.
 - [ ] Voer uit: ha core restart
 - [ ] Controleer of version 0.6.3-beta.4 actief is.
