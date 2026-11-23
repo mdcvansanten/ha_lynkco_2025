@@ -64,3 +64,11 @@ Deze lijst staat bewust in GitHub, zodat hij behouden blijft wanneer je later te
 - Upstream referentie: b12e release v2026.11.1, niet automatisch overnemen.
 
 Gerelateerde instructie: LYNKCO_MY2022_BETA4.md in dezelfde branch.
+
+
+### Voor activatie nog open — betrouwbaarder sessieherstel
+- [ ] Automatisch sessieherstel bij bevestigde 403-sessieovername beoordelen en gericht overnemen uit upstream v2026.11.1.
+- [ ] Gelijktijdige tokenvernieuwing beveiligen met één refresh-lock.
+- [ ] Time-outs en fouten onderscheiden van ongeldige inloggegevens; geen onnodige herauth.
+- [ ] Eerst testen dat bestaand MY2022 dashboard, entiteiten en commando's intact blijven.
+- [ ] Na besluit pas de beoogde verbeterde testversie installeren; beta.4 --apply uitstellen.
