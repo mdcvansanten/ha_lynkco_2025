@@ -97,7 +97,9 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
 
     def _api(self, session):
         with mock.patch.object(self.module.LynkCoAPI, "_update_claims", lambda self: None):
-            return self.module.LynkCoAPI(session, "old-token", "old-refresh", "fake-device")
+            api = self.module.LynkCoAPI(session, "old-token", "old-refresh", "fake-device")
+        api._update_claims = lambda: None
+        return api
 
     async def test_known_403_claims_session_and_retries(self):
         session = _Session(
