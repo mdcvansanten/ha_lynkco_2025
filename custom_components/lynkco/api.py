@@ -8,6 +8,7 @@ import re
 import time
 import urllib.parse
 import uuid
+from collections.abc import Callable
 
 import aiohttp
 import pkce
@@ -104,7 +105,7 @@ class LynkCoAPI:
         access_token: str,
         refresh_token: str,
         device_id: str,
-        on_token_refresh: callable | None = None,
+        on_token_refresh: Callable[[str, str], None] | None = None,
     ) -> None:
         self._session = session
         self._access_token = access_token
