@@ -42,3 +42,10 @@ Deze lijst is opgeslagen in de eigen GitHub-repository. Alleen vakjes afvinken n
 - [ ] Na praktijkcontrole beslissen of beta.5 geschikt is om verder te gebruiken.
 
 Documentatie: `LYNKCO_MY2022_BETA5.md`. Rollback: nieuwe beta.5-back-up terugplaatsen vóór herstart.
+
+### Praktijkbevinding na herstart 24-11-2026
+- [x] Home Assistant herstart na beta.5 installatie (gebruiker bevestigd).
+- [x] Home Assistant toont Lynk & Co als 'Configureer opnieuw' en vraagt om `msauth://`-omleidings-URL (gebruikersscreenshot).
+- [ ] Bestaande integratie opnieuw aanmelden met nieuwe redirect-code; GEEN codes of tokens in GitHub vastleggen.
+- [ ] Na succesvolle heraanmelding vaststellen of en waarom de refresh tokens na herstart zijn afgewezen; eerst veilig gefilterde HA logs bekijken.
+- [ ] Controleren of geïntegreerde entiteiten na heraanmelding terugkomen, voordat een voertuigcommando wordt gebruikt.
