@@ -28,7 +28,9 @@ ha core restart
 `--apply` maakt een nieuwe integratieback-up onder `/config/backups/lynkco-before-beta6-...`; automatische herstart is uitgeschakeld. Laat daarna de bestaande reauth-flow lopen. Klik geen upstream update uit Marketplace aan en verwijder de huidige integratie niet.
 
 ### Afvinkpunten
-- [ ] `--check` groen, zonder wijzigingen in HA.
+- [ ] `--check` volledig afgerond zonder wijzigingen in HA (eindstatus `ha core check` nog verifiëren).
+- [x] Beta.6 syntax geslaagd; actieve basis beta.5 herkend (terminaluitvoer 24 november 2026).
+- [x] Alle 13 offline regressietests geslaagd op Home Assistant (terminaluitvoer 24 november 2026).
 - [ ] `--apply` met afzonderlijke back-up uitgevoerd.
 - [ ] HA herstart.
 - [ ] *Plak omleidings-URL* toont nu bijpassende Lynk-aanmeldlink.
