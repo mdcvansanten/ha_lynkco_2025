@@ -26,7 +26,7 @@ Deze lijst is opgeslagen in de eigen GitHub-repository. Alleen vakjes afvinken n
 - [x] `sh /config/lynkco-beta5-prep/install_beta5.sh --apply` uitgevoerd; beta.5 geplaatst, 10/10 regressietests geslaagd (gebruikersuitvoer).
 - [x] Nieuwe backupmap: `/config/backups/lynkco-before-beta5-20261123-212900` (volgens uitvoer).
 - [ ] Post-installatie `ha core check` nog afzonderlijk bevestigen: deze regel ontbreekt in de geplakte uitvoer.
-- [ ] `ha core restart` uitgevoerd.
+- [x] Home Assistant na beta.5 installatie herstart (gebruiker bevestigd).
 - [ ] Nieuwe versie `0.6.3-beta.5` actief; geen onbekende entiteiten verdwenen.
 
 ## Functionele test / veiligheid
