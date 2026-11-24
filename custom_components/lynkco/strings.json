@@ -11,7 +11,7 @@
       },
       "paste_redirect": {
         "title": "Paste Redirect URL",
-        "description": "Paste the full msauth://... URL from the browser DevTools Location header.",
+        "description": "**Lynk & Co login URL for this attempt:**\n\n{auth_url}\n\nOpen this URL in a new browser tab and sign in. In Chrome F12 → Network → 302 redirect → Response Headers → Location, copy the full `msauth://...code=...` URL and paste it below. Do not use an older login URL; it will not match the secure login attempt.",
         "data": {
           "redirect_url": "Redirect URL"
         }

@@ -11,7 +11,7 @@
       },
       "paste_redirect": {
         "title": "Plak omleidings-URL",
-        "description": "Plak de volledige msauth://... URL uit de Locatie-header van de browser DevTools.",
+        "description": "**Lynk & Co-aanmeldlink voor deze poging:**\n\n{auth_url}\n\nOpen deze link in een nieuw browsertabblad en meld je aan. Ga in Chrome F12 → Netwerk → de 302-omleiding → Response Headers → Location. Kopieer daar de volledige `msauth://...code=...`-URL en plak die hieronder. Gebruik geen oude aanmeldlink: die hoort niet bij deze beveiligde aanmeldpoging.",
         "data": {
           "redirect_url": "Omleidings-URL"
         }

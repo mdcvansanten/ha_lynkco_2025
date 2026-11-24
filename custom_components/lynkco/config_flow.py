@@ -39,6 +39,14 @@ class LynkCoConfigFlow(ConfigFlow, domain=DOMAIN):
         self._code_verifier: str | None = None
         self._code_challenge: str | None = None
 
+    def _ensure_auth_url(self) -> str:
+        """Keep the login URL tied to this flow's PKCE verifier."""
+        if not self._auth_url or not self._code_verifier:
+            self._auth_url, self._code_verifier, self._code_challenge = (
+                LynkCoAPI.generate_auth_url()
+            )
+        return self._auth_url
+
     async def async_step_user(self, user_input=None):
         """Step 1: Generate auth URL and show it to the user."""
         self._auth_url, self._code_verifier, self._code_challenge = (
@@ -55,6 +63,7 @@ class LynkCoConfigFlow(ConfigFlow, domain=DOMAIN):
         """Step 2: User has opened the URL — ask for the redirect."""
         return self.async_show_form(
             step_id="paste_redirect",
+            description_placeholders={"auth_url": self._ensure_auth_url()},
             data_schema=vol.Schema(
                 {vol.Required("redirect_url"): str}
             ),
@@ -64,6 +73,8 @@ class LynkCoConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_paste_redirect(self, user_input=None):
         """Step 3: Exchange the code for tokens."""
         errors = {}
+        # Recover if the frontend skipped/reopened the read-only login step.
+        self._ensure_auth_url()
 
         if user_input is not None:
             redirect_url = user_input["redirect_url"].strip()
@@ -127,6 +138,7 @@ class LynkCoConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="paste_redirect",
+            description_placeholders={"auth_url": self._auth_url},
             data_schema=vol.Schema(
                 {vol.Required("redirect_url"): str}
             ),

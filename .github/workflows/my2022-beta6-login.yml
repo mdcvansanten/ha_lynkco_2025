@@ -1,0 +1,20 @@
+name: MY2022 beta6 login flow smoke
+on:
+  push:
+    branches:
+      - lynkco-my2022-v0.6.3-beta6-login-link
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Syntax check
+        run: python3 -m compileall -q custom_components/lynkco
+      - name: Offline regression suite
+        run: python3 -m unittest discover -s tests -p 'test_beta*.py' -v
