@@ -77,26 +77,13 @@ class LynkCoCoordinator(DataUpdateCoordinator):
         except LynkCoAuthError as err:
             raise ConfigEntryAuthFailed("Lynk & Co login has expired") from err
         except Exception as err:
-            # Preserve the previous retry, but never hide a rejected refresh token.
-            try:
-                refreshed = await self.api.refresh_tokens()
-            except LynkCoAuthError as auth_err:
-                raise ConfigEntryAuthFailed("Lynk & Co login has expired") from auth_err
-            except Exception as refresh_err:
-                raise UpdateFailed(
-                    f"API error and refresh unavailable: {type(refresh_err).__name__}"
-                ) from refresh_err
-            if refreshed:
-                try:
-                    data = await self._async_fetch_all()
-                except LynkCoAuthError as auth_err:
-                    raise ConfigEntryAuthFailed("Lynk & Co login has expired") from auth_err
-                except Exception as retry_err:
-                    raise UpdateFailed(
-                        f"API error after refresh: {type(retry_err).__name__}"
-                    ) from retry_err
-            else:
-                raise UpdateFailed(f"API error: {type(err).__name__}") from err
+            # The API already handles a 401 with one locked token refresh and
+            # a confirmed 403 with one bounded session reclaim. Any other
+            # failure (timeouts, 403 on a forbidden endpoint, 429/5xx, DNS)
+            # must not cause a SECOND refresh or a misleading Repairs login.
+            raise UpdateFailed(
+                f"Lynk & Co temporarily unavailable ({type(err).__name__})"
+            ) from err
 
         # Store propulsion type for entity filtering
         propulsion = (data["metadata"].get("vehicle") or {}).get("propulsionType")
